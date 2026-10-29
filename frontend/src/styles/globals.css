@@ -1,0 +1,299 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;800&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Great+Vibes&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #14090E;
+  --foreground: #FFF8F0;
+  --burgundy: #3A1023;
+  --wine: #5A1733;
+  --gold: #D8B779;
+  --rose: #E9A8B7;
+  --ivory: #FFF8F0;
+  --blush: #F7E5E8;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Cinematic Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1e0b14;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #5A1733;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #D8B779;
+}
+
+/* Headings font */
+h1, h2, h3, .font-cinzel {
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.05em;
+}
+
+.font-editorial {
+  font-family: 'Playfair Display', Georgia, serif;
+}
+
+.font-signature {
+  font-family: 'Great Vibes', cursive;
+}
+
+/* Subtle glassmorphism */
+.glass-panel {
+  background: rgba(38, 24, 32, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(216, 183, 121, 0.15);
+}
+
+.glass-panel-gold {
+  background: rgba(58, 16, 35, 0.6);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(216, 183, 121, 0.35);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(216, 183, 121, 0.1);
+}
+
+/* Gold Gradient Text */
+.text-gold-gradient {
+  background: linear-gradient(135deg, #FFF8F0 0%, #D8B779 50%, #C79D55 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.text-rose-gradient {
+  background: linear-gradient(135deg, #FFF8F0 0%, #E9A8B7 50%, #DC8196 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Accessibility: Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.home-page {
+  background: #f6f0e7;
+  color: #382522;
+}
+
+.home-hero {
+  background: #1b1313;
+}
+
+.home-hero-image {
+  z-index: 0;
+  object-position: 66% 42%;
+  animation: hero-image-settle 1.2s ease-out both;
+}
+
+.home-hero-video {
+  z-index: 1;
+  object-fit: cover;
+  object-position: 68% 44%;
+}
+
+.home-hero-shade {
+  z-index: 2;
+  background:
+    linear-gradient(90deg, rgba(20, 14, 14, 0.94) 0%, rgba(20, 14, 14, 0.77) 30%, rgba(20, 14, 14, 0.2) 68%, rgba(20, 14, 14, 0.12) 100%),
+    linear-gradient(0deg, rgba(20, 14, 14, 0.56) 0%, transparent 36%);
+}
+
+.home-hero-glow {
+  z-index: 3;
+  background: radial-gradient(ellipse at 75% 40%, transparent 10%, rgba(13, 10, 10, 0.08) 62%, rgba(13, 10, 10, 0.3) 100%);
+}
+
+@media (max-width: 639px) {
+  .home-hero-video {
+    object-position: 66% center;
+  }
+
+  .home-hero-shade {
+    background:
+      linear-gradient(0deg, rgba(20, 14, 14, 0.9) 0%, rgba(20, 14, 14, 0.68) 35%, rgba(20, 14, 14, 0.08) 78%),
+      linear-gradient(90deg, rgba(20, 14, 14, 0.38), transparent 85%);
+  }
+}
+
+.home-welcome,
+.home-films {
+  background: #f6f0e7;
+}
+
+.home-gallery {
+  background: #f0e8dc;
+}
+
+.home-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: #9c704a;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.19em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.home-eyebrow-light {
+  color: #e4c28d;
+}
+
+.home-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.home-photo-card {
+  position: relative;
+  aspect-ratio: 4 / 5;
+  min-width: 0;
+  overflow: hidden;
+  background: #ded0bf;
+}
+
+.home-photo-link,
+.home-photo-link img {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+.home-photo-link {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  text-align: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.home-photo-link img {
+  object-fit: cover;
+  object-position: 50% 34%;
+  transition: transform 650ms cubic-bezier(0.2, 0.65, 0.3, 1), filter 400ms ease;
+}
+
+.home-photo-link:hover img,
+.home-photo-link:focus-visible img {
+  filter: saturate(1.05);
+  transform: scale(1.045);
+}
+
+.home-photo-link:focus-visible {
+  outline: 2px solid #9c704a;
+  outline-offset: -3px;
+}
+
+.home-photo-caption {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 2.3rem 0.85rem 0.8rem;
+  color: white;
+  background: linear-gradient(transparent, rgba(19, 13, 12, 0.7));
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+
+.home-photo-link:hover .home-photo-caption,
+.home-photo-link:focus-visible .home-photo-caption {
+  opacity: 1;
+}
+
+.home-film-strip {
+  background:
+    radial-gradient(ellipse at 18% 90%, rgba(147, 86, 60, 0.16), transparent 42%),
+    #211617;
+}
+
+.home-video-card {
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.15);
+}
+
+.home-video-card video {
+  display: block;
+}
+
+.home-note {
+  background:
+    radial-gradient(ellipse at 50% 20%, rgba(229, 207, 174, 0.32), transparent 56%),
+    #f6f0e7;
+}
+
+@keyframes hero-image-settle {
+  from {
+    opacity: 0.65;
+    transform: scale(1.025);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (min-width: 640px) {
+  .home-photo-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.85rem;
+  }
+
+  .home-photo-caption {
+    font-size: 0.9rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .home-photo-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .home-hero-shade {
+    background:
+      linear-gradient(90deg, rgba(20, 14, 14, 0.72), rgba(20, 14, 14, 0.18) 85%),
+      linear-gradient(0deg, rgba(20, 14, 14, 0.88), rgba(20, 14, 14, 0.08) 76%);
+  }
+
+  .home-photo-caption {
+    padding: 1.7rem 0.55rem 0.55rem;
+    font-size: 0.68rem;
+    opacity: 1;
+  }
+}
