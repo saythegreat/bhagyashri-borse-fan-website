@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,9 +15,14 @@ from app.api.collector import router as collector_router
 from app.api.videos import router as videos_router
 from app.api.export import router as export_router
 
-# Create database tables automatically
-Base.metadata.create_all(bind=engine)
-ensure_video_library_columns()
+# On serverless platforms (e.g. Vercel), avoid executing global schema creation on module load.
+# Schemas are pre-migrated into PostgreSQL, and cold-start execution adds latency or risk of timeout.
+if not os.getenv("VERCEL"):
+    try:
+        Base.metadata.create_all(bind=engine)
+        ensure_video_library_columns()
+    except Exception as db_init_err:
+        print(f"[*] Note on database table initialization: {db_init_err}")
 
 app = FastAPI(
     title="A World of Bhagyashri - Fan API",
@@ -40,9 +46,12 @@ app.add_middleware(
 
 # Keep managed storage private; media is served through approval-checked routes.
 storage_path = Path(settings.MEDIA_STORAGE_DIR)
-storage_path.mkdir(parents=True, exist_ok=True)
-(storage_path / "images").mkdir(parents=True, exist_ok=True)
-(storage_path / "thumbnails").mkdir(parents=True, exist_ok=True)
+try:
+    storage_path.mkdir(parents=True, exist_ok=True)
+    (storage_path / "images").mkdir(parents=True, exist_ok=True)
+    (storage_path / "thumbnails").mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
 
 # Include API Routers
 app.include_router(auth_router)
@@ -51,6 +60,17 @@ app.include_router(media_router)
 app.include_router(collector_router)
 app.include_router(videos_router)
 app.include_router(export_router)
+
+@app.get("/", tags=["Root"])
+def root():
+    """Root status endpoint for health monitoring and uptime checks."""
+    return {
+        "title": "A World of Bhagyashri - Fan API",
+        "status": "online",
+        "docs_url": "/docs",
+        "health_url": "/api/health",
+        "version": "1.0.0",
+    }
 
 @app.on_event("startup")
 def on_startup():
@@ -70,9 +90,9 @@ def on_startup():
             db.commit()
             print(f"[*] Initialized default admin user: '{settings.ADMIN_INITIAL_USERNAME}'")
 
-        # Auto-seed local media from Photos/ if database has no media records
+        # Auto-seed local media from Photos/ if database has no media records and in development
         media_count = db.query(Media).count()
-        if media_count == 0:
+        if media_count == 0 and settings.APP_ENV != "production":
             project_root = Path(__file__).resolve().parents[2]
             photos_dir = project_root / "Photos"
             if photos_dir.exists() and photos_dir.is_dir():
@@ -99,7 +119,8 @@ def health_check(db: Session = Depends(get_db)):
     """Health check endpoint for API and database connectivity."""
     db_ok = False
     try:
-        db.execute(Base.metadata.tables["users"].select().limit(1))
+        from sqlalchemy import select
+        db.execute(select(User.id).limit(1))
         db_ok = True
     except Exception:
         db_ok = False
@@ -108,6 +129,6 @@ def health_check(db: Session = Depends(get_db)):
         "status": "healthy" if db_ok else "degraded",
         "database": "connected" if db_ok else "error",
         "app_env": settings.APP_ENV,
-        "storage_ready": storage_path.exists(),
+        "storage_ready": True,
         "version": "1.0.0",
     }

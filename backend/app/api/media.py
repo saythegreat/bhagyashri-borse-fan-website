@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.config import settings
@@ -181,12 +181,19 @@ def get_media_image(
         raise HTTPException(status_code=403, detail="Access denied to unapproved media")
 
     relative_path = item.thumbnail_path if thumbnail else item.local_path
+    if relative_path and (relative_path.startswith("http://") or relative_path.startswith("https://")):
+        return RedirectResponse(url=relative_path, status_code=307)
+
     if not relative_path:
+        if item.direct_image_url and (item.direct_image_url.startswith("http://") or item.direct_image_url.startswith("https://")):
+            return RedirectResponse(url=item.direct_image_url, status_code=307)
         raise HTTPException(status_code=404, detail="A local image is not available")
 
     storage_root = Path(settings.MEDIA_STORAGE_DIR).resolve()
     image_path = (storage_root / relative_path).resolve()
     if not image_path.is_relative_to(storage_root) or not image_path.is_file():
+        if item.direct_image_url and (item.direct_image_url.startswith("http://") or item.direct_image_url.startswith("https://")):
+            return RedirectResponse(url=item.direct_image_url, status_code=307)
         raise HTTPException(status_code=404, detail="A local image is not available")
 
     media_type = "image/jpeg" if thumbnail else item.mime_type

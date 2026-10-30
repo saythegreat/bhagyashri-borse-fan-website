@@ -1,6 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from pathlib import Path
 from app.database import get_db
@@ -68,8 +68,13 @@ def stream_local_video(
     ):
         raise HTTPException(status_code=404, detail="Video not found")
 
+    if item.local_path.startswith("http://") or item.local_path.startswith("https://"):
+        return RedirectResponse(item.local_path, status_code=307)
+
     video_path = (PROJECT_ROOT / item.local_path).resolve()
     if not video_path.is_relative_to(PROJECT_ROOT) or not video_path.is_file():
+        if item.video_url and (item.video_url.startswith("http://") or item.video_url.startswith("https://")):
+            return RedirectResponse(item.video_url, status_code=307)
         raise HTTPException(status_code=404, detail="Video file is not available")
 
     return FileResponse(

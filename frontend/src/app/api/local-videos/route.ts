@@ -4,7 +4,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const backendApiUrl = process.env.BACKEND_API_URL || "http://127.0.0.1:8000/api";
+  const rawBackendUrl =
+    process.env.BACKEND_API_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    "http://127.0.0.1:8000/api";
+  const cleanUrl = rawBackendUrl.trim().replace(/\/$/, "");
+  const backendApiUrl = cleanUrl.endsWith("/api") ? cleanUrl : `${cleanUrl}/api`;
   let response: Response;
   try {
     response = await fetch(`${backendApiUrl}/videos?provider=local`, {

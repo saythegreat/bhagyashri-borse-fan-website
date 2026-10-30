@@ -36,6 +36,7 @@ yarn-error.log*
 backend/bhagyashri.db
 backend/bhagyashri.db-journal
 *.db
+*.db.bak
 *.sqlite3
 
 # Downloaded Storage (Keep directory structure but exclude heavy files)
