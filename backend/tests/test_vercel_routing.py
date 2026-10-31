@@ -1,6 +1,7 @@
 import pytest
 from starlette.testclient import TestClient
-from api.index import app, clean_vercel_path
+from main import app
+from api.index import app as api_index_app
 
 
 @pytest.fixture
@@ -8,24 +9,12 @@ def client():
     return TestClient(app)
 
 
-def test_clean_vercel_path_unit():
-    assert clean_vercel_path("") == "/"
-    assert clean_vercel_path("/") == "/"
-    assert clean_vercel_path("/api/index.py") == "/"
-    assert clean_vercel_path("/api/index.py/") == "/"
-    assert clean_vercel_path("/api/index") == "/"
-    assert clean_vercel_path("/api/index/") == "/"
-    assert clean_vercel_path("/api/index.py/api/health") == "/api/health"
-    assert clean_vercel_path("/api/index.py/docs") == "/docs"
-    assert clean_vercel_path("/api/index.py/openapi.json") == "/openapi.json"
-    assert clean_vercel_path("/api/index.py/api/media/browse") == "/api/media/browse"
-    assert clean_vercel_path("api/index.py/api/health") == "/api/health"
-    assert clean_vercel_path("/api/index.py//docs") == "/docs"
-    assert clean_vercel_path("/api/index/api/health") == "/api/health"
-    assert clean_vercel_path("/api/health?param=1") == "/api/health"
+def test_native_entrypoint_consistency():
+    # Verify both main.app and api.index.app point to the exact same FastAPI instance
+    assert app is api_index_app
 
 
-def test_direct_root(client):
+def test_root_endpoint(client):
     response = client.get("/")
     assert response.status_code == 200
     data = response.json()
@@ -33,101 +22,44 @@ def test_direct_root(client):
     assert data["version"] == "1.0.0"
 
 
-def test_direct_health(client):
-    response = client.get("/api/health")
-    assert response.status_code == 200
-    data = response.json()
-    assert "status" in data
-    assert "database" in data
-
-
-def test_direct_docs(client):
-    response = client.get("/docs")
-    assert response.status_code == 200
-    assert "text/html" in response.headers.get("content-type", "")
-
-
-def test_direct_openapi(client):
-    response = client.get("/openapi.json")
-    assert response.status_code == 200
-    data = response.json()
-    assert "openapi" in data
-
-
-# Tests simulating Vercel destination path routing (/api/index.py/$1)
-def test_vercel_destination_routing_root(client):
-    # When requesting / with /api/index.py/$1, Vercel routes to /api/index.py/
-    response = client.get("/api/index.py/")
+def test_api_root_alias(client):
+    response = client.get("/api")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "online"
 
 
-def test_vercel_destination_routing_root_no_trailing_slash(client):
-    # When requesting / with /api/index.py/$1, Vercel routes to /api/index.py
-    response = client.get("/api/index.py")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "online"
+def test_health_endpoints(client):
+    # Both /api/health and /health resolve cleanly
+    res_api = client.get("/api/health")
+    assert res_api.status_code == 200
+    assert "status" in res_api.json()
+    assert "database" in res_api.json()
+
+    res_short = client.get("/health")
+    assert res_short.status_code == 200
+    assert "status" in res_short.json()
 
 
-def test_vercel_destination_routing_health(client):
-    # When requesting /api/health with /api/index.py/$1, Vercel routes to /api/index.py/api/health
-    response = client.get("/api/index.py/api/health")
-    assert response.status_code == 200
-    data = response.json()
-    assert "status" in data
-    assert "database" in data
+def test_docs_and_openapi(client):
+    res_docs = client.get("/docs")
+    assert res_docs.status_code == 200
+    assert "text/html" in res_docs.headers.get("content-type", "")
 
-
-def test_vercel_destination_routing_docs(client):
-    # When requesting /docs with /api/index.py/$1, Vercel routes to /api/index.py/docs
-    response = client.get("/api/index.py/docs")
-    assert response.status_code == 200
-    assert "text/html" in response.headers.get("content-type", "")
-
-
-def test_vercel_destination_routing_openapi(client):
-    # When requesting /openapi.json with /api/index.py/$1, Vercel routes to /api/index.py/openapi.json
-    response = client.get("/api/index.py/openapi.json")
-    assert response.status_code == 200
-    data = response.json()
+    res_openapi = client.get("/openapi.json")
+    assert res_openapi.status_code == 200
+    data = res_openapi.json()
     assert "openapi" in data
     assert data["info"]["title"] == "A World of Bhagyashri - Fan API"
 
 
-def test_vercel_destination_routing_nested_router(client):
-    # Nested router endpoint /api/media via destination path
-    response = client.get("/api/index.py/api/media")
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
+def test_nested_routers(client):
+    # Test media router
+    res_media = client.get("/api/media")
+    assert res_media.status_code == 200
+    assert "items" in res_media.json()
 
-    # Nested router endpoint /api/videos via destination path
-    response_videos = client.get("/api/index.py/api/videos")
-    assert response_videos.status_code == 200
-    assert isinstance(response_videos.json(), list)
-
-
-def test_vercel_with_edge_headers_root(client):
-    # Vercel with x-matched-path: /
-    response = client.get("/api/index.py", headers={"x-matched-path": "/"})
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "online"
-
-
-def test_vercel_with_edge_headers_health(client):
-    # Vercel with x-matched-path: /api/health
-    response = client.get("/api/index.py", headers={"x-matched-path": "/api/health"})
-    assert response.status_code == 200
-    data = response.json()
-    assert "status" in data
-
-
-def test_vercel_with_rewritten_edge_headers(client):
-    # Vercel with x-matched-path: /api/index.py/api/health
-    response = client.get("/api/index.py/api/health", headers={"x-matched-path": "/api/index.py/api/health"})
-    assert response.status_code == 200
-    data = response.json()
-    assert "status" in data
+    # Test videos router
+    res_videos = client.get("/api/videos")
+    assert res_videos.status_code == 200
+    assert isinstance(res_videos.json(), list)
