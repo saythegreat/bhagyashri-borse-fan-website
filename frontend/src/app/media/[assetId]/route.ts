@@ -13,10 +13,14 @@ export async function GET(
 
   const [, id] = match;
   const range = request.headers.get("range");
+  const defaultBackend =
+    process.env.NODE_ENV === "production"
+      ? "https://bhagyashri-borse-fan-website.vercel.app/api"
+      : "http://127.0.0.1:8000/api";
   const rawBackendUrl =
     process.env.BACKEND_API_URL ||
     process.env.NEXT_PUBLIC_API_URL ||
-    "http://127.0.0.1:8000/api";
+    defaultBackend;
   const cleanUrl = rawBackendUrl.trim().replace(/\/$/, "");
   const backendApiUrl = cleanUrl.endsWith("/api") ? cleanUrl : `${cleanUrl}/api`;
   let response: Response;

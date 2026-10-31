@@ -126,7 +126,12 @@ def migrate_media_to_blob(
         db_url = db_url.replace("postgres://", "postgresql://", 1)
 
     connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
-    engine = create_engine(db_url, connect_args=connect_args)
+    engine = create_engine(
+        db_url,
+        connect_args=connect_args,
+        pool_pre_ping=True,
+        pool_recycle=60,
+    )
     Session = sessionmaker(bind=engine)
     db = Session()
 
@@ -138,6 +143,15 @@ def migrate_media_to_blob(
     print(f"[*] Access mode: {access}")
     print(f"[*] Limit: {limit if limit > 0 else 'All items'}")
     print(f"[*] Dry run mode: {dry_run}")
+
+    def _safe_commit():
+        nonlocal db
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            db.close()
+            db = Session()
 
     try:
         # 1. Migrate Photos / Images
@@ -212,7 +226,15 @@ def migrate_media_to_blob(
                         uploaded_images += 1
                         print(f"  [+] Uploaded image #{item.id} -> {cdn_url}")
                     except Exception as err:
-                        db.rollback()
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
+                        db = Session()
                         failed_images += 1
                         print(f"  [!] Failed image #{item.id} ({candidate.name}): {err}")
             else:
@@ -266,7 +288,15 @@ def migrate_media_to_blob(
                         uploaded_vids += 1
                         print(f"  [+] Uploaded video #{vid.id} -> {cdn_url}")
                     except Exception as err:
-                        db.rollback()
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
+                        db = Session()
                         failed_vids += 1
                         print(f"  [!] Failed video #{vid.id} ({candidate.name}): {err}")
             else:
