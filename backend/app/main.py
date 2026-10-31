@@ -28,6 +28,9 @@ app = FastAPI(
     title="A World of Bhagyashri - Fan API",
     description="Full-stack media discovery, collection, and gallery engine celebrating Bhagyashri Borse.",
     version="1.0.0",
+    docs_url="/docs",
+    openapi_url="/openapi.json",
+    redirect_slashes=False,
 )
 
 # CORS setup
@@ -62,6 +65,7 @@ app.include_router(videos_router)
 app.include_router(export_router)
 
 @app.get("/", tags=["Root"])
+@app.get("/api", tags=["Root"], include_in_schema=False)
 def root():
     """Root status endpoint for health monitoring and uptime checks."""
     return {
@@ -71,6 +75,16 @@ def root():
         "health_url": "/api/health",
         "version": "1.0.0",
     }
+
+@app.get("/api/docs", include_in_schema=False)
+def api_docs_redirect():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/docs")
+
+@app.get("/api/openapi.json", include_in_schema=False)
+def api_openapi_redirect():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/openapi.json")
 
 @app.on_event("startup")
 def on_startup():
@@ -115,6 +129,7 @@ def on_startup():
         db.close()
 
 @app.get("/api/health", tags=["Health"])
+@app.get("/health", tags=["Health"], include_in_schema=False)
 def health_check(db: Session = Depends(get_db)):
     """Health check endpoint for API and database connectivity."""
     db_ok = False
