@@ -28,18 +28,63 @@ except Exception as init_err:
         )
 
 
+def clean_vercel_path(path: str) -> str:
+    """
+    Normalizes paths rewritten by Vercel serverless function routing.
+
+    When backend framework rewrites target `/api/index.py/$1`, Vercel routes
+    requests using the rewritten destination path (e.g. `/api/index.py/api/health`).
+    This helper safely strips the internal script prefix so that Starlette/FastAPI
+    receives the clean application route.
+
+    Examples:
+      '/api/index.py/api/health' -> '/api/health'
+      '/api/index.py/docs'       -> '/docs'
+      '/api/index.py/openapi.json' -> '/openapi.json'
+      '/api/index.py/'           -> '/'
+      '/api/index.py'            -> '/'
+      '/api/index/api/health'    -> '/api/health'
+      '/api/health'              -> '/api/health'
+      '/'                        -> '/'
+    """
+    if not path:
+        return "/"
+
+    # Strip query parameters if attached to the path
+    path = path.split("?", 1)[0].strip()
+
+    if not path.startswith("/"):
+        path = "/" + path
+
+    # Handle direct script execution targets
+    if path in ("/api/index.py", "/api/index", "/api/index.py/", "/api/index/"):
+        return "/"
+
+    if path.startswith("/api/index.py/"):
+        path = path[len("/api/index.py"):]
+    elif path.startswith("/api/index/"):
+        path = path[len("/api/index"):]
+
+    # Collapse any duplicate slashes (e.g. //docs -> /docs)
+    while "//" in path:
+        path = path.replace("//", "/")
+
+    if not path.startswith("/"):
+        path = "/" + path
+
+    return path
+
+
 class VercelPathNormalizer:
     """
     ASGI middleware for Vercel Serverless Functions.
 
-    Vercel rewrites (e.g. `/(.*) -> /api/index.py`) cause ASGI `scope['path']`
-    to be set to the rewritten destination (`/api/index.py` or `/api/index`).
-    The actual requested path is preserved by Vercel's edge network in HTTP
-    headers such as `x-matched-path`, `x-forwarded-uri`, or `x-original-uri`.
-
-    This middleware extracts the client's actual requested path and restores
-    `scope['path']` and `scope['raw_path']` so that Starlette/FastAPI route matching
-    resolves `/`, `/api/health`, `/docs`, `/openapi.json`, and API routers accurately.
+    Vercel rewrites (e.g. `/(.*) -> /api/index.py/$1`) route requests using the
+    rewritten destination path. This middleware normalizes `scope['path']` and
+    `scope['raw_path']` by stripping internal script prefixes and inspecting
+    Vercel edge headers (`x-matched-path`, `x-forwarded-uri`), ensuring that
+    Starlette/FastAPI route matching resolves `/`, `/api/health`, `/docs`,
+    `/openapi.json`, and all nested API routers accurately.
     """
 
     def __init__(self, asgi_app):
@@ -69,29 +114,24 @@ class VercelPathNormalizer:
             if matched_header:
                 try:
                     decoded = matched_header.decode("utf-8")
-                    # Strip query parameters if present in the matched path header
-                    cand_path = decoded.split("?", 1)[0]
-                    if cand_path and not cand_path.startswith("/"):
-                        cand_path = "/" + cand_path
-                    # Avoid mapping back to the internal serverless script path
-                    if cand_path not in ("/api/index.py", "/api/index", "/api/index.py/", "/api/index/"):
-                        resolved_path = cand_path
+                    cleaned = clean_vercel_path(decoded)
+                    # Use cleaned header if it has a non-root path or if raw_path is the base script
+                    if cleaned != "/" or raw_path in ("/api/index.py", "/api/index", "/api/index.py/", "/api/index/"):
+                        resolved_path = cleaned
                 except Exception:
                     pass
 
-            # 2. If no edge header was matched or header pointed to the script itself,
-            # handle Vercel rewrite defaults:
-            if not resolved_path:
-                if raw_path in ("/api/index.py", "/api/index", "/api/index.py/", "/api/index/"):
-                    resolved_path = "/"
-                elif raw_path.startswith("/api/index.py/"):
-                    resolved_path = raw_path[len("/api/index.py"):]
-                elif raw_path.startswith("/api/index/"):
-                    resolved_path = raw_path[len("/api/index"):]
+            # 2. If no header was present (or header was root while raw_path has rewritten path segments),
+            # normalize the ASGI raw_path directly:
+            if not resolved_path or resolved_path == "/":
+                cleaned_raw = clean_vercel_path(raw_path)
+                if cleaned_raw != "/":
+                    resolved_path = cleaned_raw
+                elif not resolved_path:
+                    resolved_path = cleaned_raw
 
-            if resolved_path:
-                scope["path"] = resolved_path
-                scope["raw_path"] = resolved_path.encode("utf-8")
+            scope["path"] = resolved_path
+            scope["raw_path"] = resolved_path.encode("utf-8")
 
         await self.asgi_app(scope, receive, send)
 
