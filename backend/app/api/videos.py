@@ -1,8 +1,11 @@
+import os
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse, RedirectResponse
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from pathlib import Path
+from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.models.video import Video
@@ -52,6 +55,7 @@ def list_videos(
 @router.get("/local/{video_id}/stream")
 def stream_local_video(
     video_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
@@ -68,13 +72,47 @@ def stream_local_video(
     ):
         raise HTTPException(status_code=404, detail="Video not found")
 
+    def _stream_or_redirect_video(url: str):
+        if ".private.blob.vercel-storage.com" in url:
+            token = getattr(settings, "BLOB_READ_WRITE_TOKEN", "") or os.getenv("BLOB_READ_WRITE_TOKEN", "")
+            req_headers = {"Authorization": f"Bearer {token}"} if token else {}
+            range_header = request.headers.get("range")
+            if range_header:
+                req_headers["range"] = range_header
+            try:
+                client = httpx.Client(timeout=60.0)
+                upstream = client.stream("GET", url, headers=req_headers)
+                response = upstream.__enter__()
+                resp_headers = {}
+                for h in ["accept-ranges", "content-length", "content-range", "content-type", "cache-control"]:
+                    if h in response.headers:
+                        resp_headers[h] = response.headers[h]
+                if "cache-control" not in resp_headers:
+                    resp_headers["cache-control"] = "public, max-age=86400"
+                def video_generator():
+                    try:
+                        for chunk in response.iter_bytes(chunk_size=131072):
+                            yield chunk
+                    finally:
+                        upstream.__exit__(None, None, None)
+                        client.close()
+                return StreamingResponse(
+                    video_generator(),
+                    status_code=response.status_code,
+                    media_type=response.headers.get("content-type", "video/mp4"),
+                    headers=resp_headers,
+                )
+            except Exception:
+                pass
+        return RedirectResponse(url, status_code=307)
+
     if item.local_path.startswith("http://") or item.local_path.startswith("https://"):
-        return RedirectResponse(item.local_path, status_code=307)
+        return _stream_or_redirect_video(item.local_path)
 
     video_path = (PROJECT_ROOT / item.local_path).resolve()
     if not video_path.is_relative_to(PROJECT_ROOT) or not video_path.is_file():
         if item.video_url and (item.video_url.startswith("http://") or item.video_url.startswith("https://")):
-            return RedirectResponse(item.video_url, status_code=307)
+            return _stream_or_redirect_video(item.video_url)
         raise HTTPException(status_code=404, detail="Video file is not available")
 
     return FileResponse(

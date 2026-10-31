@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     THUMBNAIL_SIZE: int = 500
     MAX_DOWNLOAD_BYTES: int = 15_000_000  # 15 MB
     
+    # Vercel Blob Storage
+    BLOB_READ_WRITE_TOKEN: str = ""
+
     # Security
     JWT_SECRET_KEY: str = "bhagyashri_super_secret_fan_jwt_key_2025_cinematic"
     JWT_ALGORITHM: str = "HS256"

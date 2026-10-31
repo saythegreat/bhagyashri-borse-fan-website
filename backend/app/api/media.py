@@ -1,8 +1,9 @@
 import os
 from pathlib import Path
 from typing import List, Optional
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.config import settings
@@ -180,20 +181,49 @@ def get_media_image(
     ):
         raise HTTPException(status_code=403, detail="Access denied to unapproved media")
 
+    def _stream_or_redirect_url(url: str, default_mime: str):
+        if ".private.blob.vercel-storage.com" in url:
+            token = getattr(settings, "BLOB_READ_WRITE_TOKEN", "") or os.getenv("BLOB_READ_WRITE_TOKEN", "")
+            req_headers = {"Authorization": f"Bearer {token}"} if token else {}
+            try:
+                client = httpx.Client(timeout=30.0)
+                upstream = client.stream("GET", url, headers=req_headers)
+                response = upstream.__enter__()
+                if response.status_code == 200:
+                    media_type = response.headers.get("content-type") or default_mime
+                    def content_generator():
+                        try:
+                            for chunk in response.iter_bytes(chunk_size=65536):
+                                yield chunk
+                        finally:
+                            upstream.__exit__(None, None, None)
+                            client.close()
+                    return StreamingResponse(
+                        content_generator(),
+                        media_type=media_type,
+                        headers={"Cache-Control": "public, max-age=86400"},
+                    )
+                else:
+                    upstream.__exit__(None, None, None)
+                    client.close()
+            except Exception:
+                pass
+        return RedirectResponse(url=url, status_code=307)
+
     relative_path = item.thumbnail_path if thumbnail else item.local_path
     if relative_path and (relative_path.startswith("http://") or relative_path.startswith("https://")):
-        return RedirectResponse(url=relative_path, status_code=307)
+        return _stream_or_redirect_url(relative_path, "image/jpeg" if thumbnail else (item.mime_type or "image/jpeg"))
 
     if not relative_path:
         if item.direct_image_url and (item.direct_image_url.startswith("http://") or item.direct_image_url.startswith("https://")):
-            return RedirectResponse(url=item.direct_image_url, status_code=307)
+            return _stream_or_redirect_url(item.direct_image_url, item.mime_type or "image/jpeg")
         raise HTTPException(status_code=404, detail="A local image is not available")
 
     storage_root = Path(settings.MEDIA_STORAGE_DIR).resolve()
     image_path = (storage_root / relative_path).resolve()
     if not image_path.is_relative_to(storage_root) or not image_path.is_file():
         if item.direct_image_url and (item.direct_image_url.startswith("http://") or item.direct_image_url.startswith("https://")):
-            return RedirectResponse(url=item.direct_image_url, status_code=307)
+            return _stream_or_redirect_url(item.direct_image_url, item.mime_type or "image/jpeg")
         raise HTTPException(status_code=404, detail="A local image is not available")
 
     media_type = "image/jpeg" if thumbnail else item.mime_type

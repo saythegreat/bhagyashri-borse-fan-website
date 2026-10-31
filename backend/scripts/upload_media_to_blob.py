@@ -6,6 +6,7 @@ Updates database records with high-speed CDN URLs while keeping original local f
 
 import os
 import sys
+import time
 import socket
 import mimetypes
 import argparse
@@ -49,6 +50,7 @@ try:
     socket.gethostbyname = _patched_gethostbyname
 except ImportError:
     pass
+
 # Ensure UTF-8 output encoding for terminals
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -65,8 +67,15 @@ from app.models.video import Video
 
 VERCEL_BLOB_API = "https://blob.vercel-storage.com"
 
-def upload_file_to_blob(file_path: Path, pathname: str, token: str) -> str:
-    """Upload a file to Vercel Blob and return its public CDN URL."""
+def upload_file_to_blob(
+    file_path: Path,
+    pathname: str,
+    token: str,
+    access: str = "public",
+    retries: int = 3,
+    timeout_sec: float = 60.0,
+) -> str:
+    """Upload a file to Vercel Blob with exponential backoff retries and return CDN URL."""
     mime_type, _ = mimetypes.guess_type(str(file_path))
     if not mime_type:
         mime_type = "video/mp4" if file_path.suffix.lower() == ".mp4" else "image/jpeg"
@@ -79,16 +88,40 @@ def upload_file_to_blob(file_path: Path, pathname: str, token: str) -> str:
         "authorization": f"Bearer {token}",
         "x-api-version": "7",
         "x-content-type": mime_type,
+        "content-type": mime_type,
+        "x-vercel-blob-access": access,
     }
 
-    response = httpx.put(url, headers=headers, content=file_bytes, timeout=60.0)
-    if response.status_code not in (200, 201):
-        raise RuntimeError(f"Blob upload failed ({response.status_code}): {response.text}")
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            response = httpx.put(url, headers=headers, content=file_bytes, timeout=timeout_sec)
+            if response.status_code in (200, 201):
+                data = response.json()
+                return data.get("url")
+            elif 400 <= response.status_code < 500:
+                # Client-side / auth error; retrying won't help
+                raise RuntimeError(f"Blob upload rejected ({response.status_code}): {response.text}")
+            else:
+                last_error = f"HTTP {response.status_code}: {response.text}"
+        except httpx.TransportError as exc:
+            last_error = f"Transport error: {exc}"
 
-    data = response.json()
-    return data.get("url")
+        if attempt < retries:
+            delay = 2 ** (attempt - 1)
+            print(f"    [!] Upload failed (attempt {attempt}/{retries}): {last_error}. Retrying in {delay}s...")
+            time.sleep(delay)
 
-def migrate_media_to_blob(db_url: str, blob_token: str, dry_run: bool = False):
+    raise RuntimeError(f"Blob upload failed after {retries} attempts: {last_error}")
+
+def migrate_media_to_blob(
+    db_url: str,
+    blob_token: str,
+    access: str = "public",
+    limit: int = 0,
+    batch_size: int = 10,
+    dry_run: bool = False,
+):
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
 
@@ -101,24 +134,32 @@ def migrate_media_to_blob(db_url: str, blob_token: str, dry_run: bool = False):
     photos_dir = project_root / "Photos"
     storage_dir = backend_dir / "storage"
 
-    print(f"[*] Connecting to database: {db_url.split('@')[-1] if '@' in db_url else db_url}")
+    print(f"[*] Target database host: {db_url.split('@')[-1] if '@' in db_url else db_url}")
+    print(f"[*] Access mode: {access}")
+    print(f"[*] Limit: {limit if limit > 0 else 'All items'}")
     print(f"[*] Dry run mode: {dry_run}")
 
     try:
         # 1. Migrate Photos / Images
-        media_items = db.query(Media).filter(Media.review_status == "approved").all()
-        print(f"\n[*] Found {len(media_items)} approved media items to check...")
+        media_items = db.query(Media).filter(Media.review_status == "approved").order_by(Media.id.asc()).all()
+        print(f"\n[*] Found {len(media_items)} approved media items in library...")
 
         uploaded_images = 0
+        uploaded_thumbs = 0
         skipped_images = 0
+        failed_images = 0
 
         for item in media_items:
-            # Check if local_path is already a remote URL
+            if limit > 0 and uploaded_images >= limit:
+                print(f"[*] Reached specified limit ({limit}) for images.")
+                break
+
+            # Skip if already a remote Blob URL
             if item.local_path and item.local_path.startswith("http"):
                 skipped_images += 1
                 continue
 
-            # Look for local file in storage or Photos
+            # Resolve local file candidate
             candidate = None
             if item.local_path:
                 candidate = storage_dir / item.local_path
@@ -126,7 +167,6 @@ def migrate_media_to_blob(db_url: str, blob_token: str, dry_run: bool = False):
                     candidate = photos_dir / Path(item.local_path).name
 
             if not candidate or not candidate.exists():
-                # Try finding by title/tag in Photos
                 for ext in [".jpg", ".jpeg", ".png", ".webp"]:
                     c = photos_dir / f"{item.title}{ext}"
                     if c.exists():
@@ -137,32 +177,62 @@ def migrate_media_to_blob(db_url: str, blob_token: str, dry_run: bool = False):
                 safe_stem = candidate.stem.replace(" ", "_")[:32]
                 blob_pathname = f"images/{item.category}/{safe_stem}_{item.id}{candidate.suffix.lower()}"
 
+                # Companion thumbnail candidate
+                thumb_candidate = None
+                if item.thumbnail_path and not item.thumbnail_path.startswith("http"):
+                    tc = storage_dir / item.thumbnail_path
+                    if tc.exists():
+                        thumb_candidate = tc
+
                 if dry_run:
-                    print(f"  [Dry Run] Would upload {candidate.name} -> {blob_pathname}")
+                    print(f"  [Dry Run] Image #{item.id}: {candidate.name} -> {blob_pathname}")
+                    if thumb_candidate:
+                        print(f"    [Dry Run] Thumbnail: {thumb_candidate.name} -> thumbnails/thumb_{item.id}_{safe_stem}.jpg")
+                        uploaded_thumbs += 1
                     uploaded_images += 1
                 else:
                     try:
-                        cdn_url = upload_file_to_blob(candidate, blob_pathname, blob_token)
+                        # Upload full image
+                        cdn_url = upload_file_to_blob(
+                            candidate, blob_pathname, blob_token, access=access, retries=3, timeout_sec=60.0
+                        )
                         item.local_path = cdn_url
                         item.direct_image_url = cdn_url
+
+                        # Upload companion thumbnail if available
+                        if thumb_candidate:
+                            thumb_pathname = f"thumbnails/thumb_{item.id}_{safe_stem}.jpg"
+                            thumb_url = upload_file_to_blob(
+                                thumb_candidate, thumb_pathname, blob_token, access=access, retries=3, timeout_sec=30.0
+                            )
+                            item.thumbnail_path = thumb_url
+                            uploaded_thumbs += 1
+
                         db.commit()
                         uploaded_images += 1
                         print(f"  [+] Uploaded image #{item.id} -> {cdn_url}")
                     except Exception as err:
+                        db.rollback()
+                        failed_images += 1
                         print(f"  [!] Failed image #{item.id} ({candidate.name}): {err}")
             else:
                 skipped_images += 1
 
-        print(f"[*] Images: {uploaded_images} uploaded, {skipped_images} skipped.")
+        print(f"[*] Images Summary: {uploaded_images} uploaded ({uploaded_thumbs} thumbnails), {skipped_images} skipped, {failed_images} failed.")
 
         # 2. Migrate Videos
-        videos = db.query(Video).filter(Video.provider == "local").all()
-        print(f"\n[*] Found {len(videos)} local videos to check...")
+        videos = db.query(Video).filter(Video.provider == "local").order_by(Video.id.asc()).all()
+        print(f"\n[*] Found {len(videos)} local videos in library...")
 
         uploaded_vids = 0
         skipped_vids = 0
+        failed_vids = 0
 
         for vid in videos:
+            if limit > 0 and uploaded_vids >= limit:
+                print(f"[*] Reached specified limit ({limit}) for videos.")
+                break
+
             if vid.local_path and vid.local_path.startswith("http"):
                 skipped_vids += 1
                 continue
@@ -183,23 +253,27 @@ def migrate_media_to_blob(db_url: str, blob_token: str, dry_run: bool = False):
             if candidate and candidate.exists():
                 blob_pathname = f"videos/{vid.video_id}{candidate.suffix.lower()}"
                 if dry_run:
-                    print(f"  [Dry Run] Would upload video {candidate.name} -> {blob_pathname}")
+                    print(f"  [Dry Run] Video #{vid.id}: {candidate.name} -> {blob_pathname}")
                     uploaded_vids += 1
                 else:
                     try:
-                        cdn_url = upload_file_to_blob(candidate, blob_pathname, blob_token)
+                        cdn_url = upload_file_to_blob(
+                            candidate, blob_pathname, blob_token, access=access, retries=3, timeout_sec=300.0
+                        )
                         vid.local_path = cdn_url
                         vid.video_url = cdn_url
                         db.commit()
                         uploaded_vids += 1
                         print(f"  [+] Uploaded video #{vid.id} -> {cdn_url}")
                     except Exception as err:
+                        db.rollback()
+                        failed_vids += 1
                         print(f"  [!] Failed video #{vid.id} ({candidate.name}): {err}")
             else:
                 skipped_vids += 1
 
-        print(f"[*] Videos: {uploaded_vids} uploaded, {skipped_vids} skipped.")
-        print("\n[+] Media migration finished!")
+        print(f"[*] Videos Summary: {uploaded_vids} uploaded, {skipped_vids} skipped, {failed_vids} failed.")
+        print("\n[+] Media migration execution complete!")
 
     finally:
         db.close()
@@ -217,6 +291,24 @@ if __name__ == "__main__":
         help="Vercel Blob read/write token (or set BLOB_READ_WRITE_TOKEN env var)",
     )
     parser.add_argument(
+        "--access",
+        default="public",
+        choices=["public", "private"],
+        help="Blob access mode (public or private, default: public)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Maximum number of images and videos to upload (0 for all, e.g. 3 for canary)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=10,
+        help="Database commit batch size (default: 10)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Simulate the upload process without modifying files or database",
@@ -227,4 +319,11 @@ if __name__ == "__main__":
         print("[!] Error: --token or BLOB_READ_WRITE_TOKEN environment variable is required (unless using --dry-run)")
         sys.exit(1)
 
-    migrate_media_to_blob(args.db_url, args.token, dry_run=args.dry_run)
+    migrate_media_to_blob(
+        args.db_url,
+        args.token,
+        access=args.access,
+        limit=args.limit,
+        batch_size=args.batch_size,
+        dry_run=args.dry_run,
+    )
